@@ -98,11 +98,26 @@ class HYTextModel(nn.Module):
                 LLM_ENCODER_LAYOUT[llm_type]["module_path"],
                 padding_side="right",
             )
-            self.llm_text_encoder = LLM_ENCODER_LAYOUT[llm_type]["text_encoder_class"].from_pretrained(
-                LLM_ENCODER_LAYOUT[llm_type]["module_path"],
-                low_cpu_mem_usage=True,
-                torch_dtype=torch.bfloat16,
-            )
+            _load_in_4bit = os.environ.get("HY_MOTION_LLM_4BIT", "0") == "1"
+            if _load_in_4bit:
+                from transformers import BitsAndBytesConfig
+                _bnb_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.bfloat16,
+                    bnb_4bit_quant_type="nf4",
+                )
+                self.llm_text_encoder = LLM_ENCODER_LAYOUT[llm_type]["text_encoder_class"].from_pretrained(
+                    LLM_ENCODER_LAYOUT[llm_type]["module_path"],
+                    low_cpu_mem_usage=True,
+                    torch_dtype=torch.bfloat16,
+                    quantization_config=_bnb_config,
+                )
+            else:
+                self.llm_text_encoder = LLM_ENCODER_LAYOUT[llm_type]["text_encoder_class"].from_pretrained(
+                    LLM_ENCODER_LAYOUT[llm_type]["module_path"],
+                    low_cpu_mem_usage=True,
+                    torch_dtype=torch.bfloat16,
+                )
             self.llm_text_encoder = self.llm_text_encoder.eval().requires_grad_(False)
             self.ctxt_dim = self.llm_text_encoder.config.hidden_size
 
