@@ -19,7 +19,7 @@ from ..utils.geometry import (
 from ..utils.loaders import load_object
 from ..utils.motion_process import smooth_rotation
 from ..utils.type_converter import get_module_device
-from .body_model import WoodenMesh
+from .body_model import WoodenMesh, forward_params_in_chunks
 
 
 def length_to_mask(lengths: Tensor, max_len: int) -> Tensor:
@@ -133,6 +133,7 @@ class MotionGeneration(torch.nn.Module):
 
         self.output_mesh_fps = kwargs.get("output_mesh_fps", 30)
         self.train_frames = kwargs.get("train_frames", 360)
+        self.body_model_chunk_frames = kwargs.get("body_model_chunk_frames")
         self.uncondition_mode = kwargs.get("uncondition_mode", False)
         self.enable_ctxt_null_feat = kwargs.get("enable_ctxt_null_feat", False)
         self.enable_special_game_feat = kwargs.get("enable_special_game_feat", False)
@@ -276,7 +277,11 @@ class MotionGeneration(torch.nn.Module):
                 vertices_all = []
                 k3d_all = []
                 for bs in range(rot6d_smooth.shape[0]):
-                    out = self.body_model.forward({"rot6d": rot6d_smooth[bs], "trans": transl_smooth[bs]})
+                    out = forward_params_in_chunks(
+                        self.body_model,
+                        {"rot6d": rot6d_smooth[bs], "trans": transl_smooth[bs]},
+                        chunk_size=self.body_model_chunk_frames,
+                    )
                     vertices_all.append(out["vertices"])
                     k3d_all.append(out["keypoints3d"])
                 vertices = torch.stack(vertices_all, dim=0)

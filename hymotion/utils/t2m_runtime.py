@@ -51,12 +51,16 @@ class T2MRuntime:
         disable_prompt_engineering: bool = False,
         prompt_engineering_host: Optional[str] = None,
         prompt_engineering_model_path: Optional[str] = None,
+        pipeline_arg_overrides: Optional[dict] = None,
     ):
         self.config_path = config_path
         self.ckpt_name = ckpt_name
         self.skip_text = skip_text
         self.prompt_engineering_host = prompt_engineering_host
         self.prompt_engineering_model_path = prompt_engineering_model_path
+        self.pipeline_arg_overrides = (
+            {} if pipeline_arg_overrides is None else dict(pipeline_arg_overrides)
+        )
         self.disable_prompt_engineering = disable_prompt_engineering
         self.skip_model_loading = skip_model_loading
         self.local_ip = _get_local_ip()
@@ -114,6 +118,8 @@ class T2MRuntime:
 
         with open(self.config_path, "r") as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
+        train_pipeline_args = dict(config["train_pipeline_args"])
+        train_pipeline_args.update(self.pipeline_arg_overrides)
 
         # Use allow_empty_ckpt=True when skip_model_loading is True
         allow_empty_ckpt = self.skip_model_loading
@@ -121,7 +127,7 @@ class T2MRuntime:
         if not self.device_ids:
             pipeline = load_object(
                 config["train_pipeline"],
-                config["train_pipeline_args"],
+                train_pipeline_args,
                 network_module=config["network_module"],
                 network_module_args=config["network_module_args"],
             )
@@ -138,7 +144,7 @@ class T2MRuntime:
             for gid in self.device_ids:
                 p = load_object(
                     config["train_pipeline"],
-                    config["train_pipeline_args"],
+                    train_pipeline_args,
                     network_module=config["network_module"],
                     network_module_args=config["network_module_args"],
                 )

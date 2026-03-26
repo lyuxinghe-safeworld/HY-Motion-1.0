@@ -216,6 +216,33 @@ def simple_lbs(v_template, rot_mats, joints, parents, skin_weights, skin_indices
     return vertices, posed_joints
 
 
+def forward_params_in_chunks(model, params, chunk_size: int | None = None):
+    """Run `model.forward` in temporal chunks to cap peak memory."""
+    if chunk_size is None:
+        return model.forward(params)
+
+    if "rot6d" not in params or "trans" not in params:
+        raise ValueError("chunked forward requires both 'rot6d' and 'trans' in params")
+
+    total_frames = params["rot6d"].shape[0]
+    if total_frames <= chunk_size:
+        return model.forward(params)
+
+    output_chunks = {}
+    for start in range(0, total_frames, chunk_size):
+        end = min(start + chunk_size, total_frames)
+        chunk_result = model.forward(
+            {
+                "rot6d": params["rot6d"][start:end],
+                "trans": params["trans"][start:end],
+            }
+        )
+        for key, value in chunk_result.items():
+            output_chunks.setdefault(key, []).append(value)
+
+    return {key: torch.cat(value, dim=0) for key, value in output_chunks.items()}
+
+
 class WoodenMesh(torch.nn.Module):
     """
     Wooden character mesh model that loads from binary files.
@@ -305,18 +332,20 @@ class WoodenMesh(torch.nn.Module):
             "keypoints3d": posed_joints,
         }
 
-    def forward_batch(self, params):
+    def forward_batch(self, params, chunk_size: int | None = None):
         assert "rot6d" in params and "trans" in params
         rot6d = params["rot6d"]
         trans = params["trans"]
         bs, num_frames = rot6d.shape[:2]
         rot6d_flat = rot6d.reshape(bs * num_frames, rot6d.shape[2], rot6d.shape[3])
         trans_flat = trans.reshape(bs * num_frames, trans.shape[2])
-        result = self.forward(
+        result = forward_params_in_chunks(
+            self,
             {
                 "rot6d": rot6d_flat,
                 "trans": trans_flat,
-            }
+            },
+            chunk_size=chunk_size,
         )
         out = {}
         for key in result:

@@ -204,7 +204,7 @@ ckpts/
 
 ## Running Inference
 
-### Single Prompt with Visualization
+### Single Prompt (Python CLI)
 
 Generate motion from a single text prompt and save both the NPZ file and a skeleton animation MP4:
 
@@ -214,16 +214,16 @@ cd ~/code/HY-Motion
 
 HY_MOTION_LLM_4BIT=1 \
 USE_HF_MODELS=1 \
-python generate_motion.py \
+python scripts/generate_motion.py \
     --prompt "A person jumps upward with both legs" \
     --duration 3.0 \
     --output-dir output/generated/
 ```
 
 This produces:
-- `output/generated/<slug>_000.npz` -- SMPL-H parameters (identical format to `local_infer.py` output)
-- `output/generated/<slug>_000.txt` -- prompt text
-- `output/generated/<slug>_skeleton.mp4` -- 3D skeleton animation video
+- `output/generated/<slug>/<slug>.npz` -- SMPL-H parameters (identical format to `local_infer.py` output)
+- `output/generated/<slug>/<slug>.txt` -- prompt text
+- `output/generated/<slug>/<slug>_skeleton.mp4` -- 3D skeleton animation video
 
 **Options:**
 
@@ -236,8 +236,45 @@ This produces:
 | `--cfg-scale` | `5.0` | Classifier-free guidance scale |
 | `--seed` | `42` | Random seed |
 | `--skip-video` | off | Skip skeleton MP4 rendering |
+| `--enable-body-model-chunking` | off | Decode the wooden mesh in frame chunks to reduce peak VRAM usage for longer motions |
 
 The NPZ output is directly consumable by `hymotion_isaaclab` for Isaac Lab tracking (see [Isaac Lab Integration](#isaac-lab-integration)).
+
+If `USE_HF_MODELS` is unset, `scripts/generate_motion.py` automatically falls back to `USE_HF_MODELS=1` when local text-encoder checkpoints are missing from `ckpts/`.
+
+### Single Prompt (Bash Wrapper)
+
+Use the wrapper when you want a single command that can either stop at `.npz` or also convert to ProtoMotions `.motion` format:
+
+```bash
+conda activate hymotion
+cd ~/code/HY-Motion
+
+HY_MOTION_LLM_4BIT=1 \
+USE_HF_MODELS=1 \
+bash scripts/generate_motion.sh \
+    --prompt "A person jumps upward with both legs" \
+    --duration 5.0 \
+    --enable-body-model-chunking \
+    --output-type motion \
+    --output-dir output/generated/
+```
+
+This creates `output/generated/<slug>/` and writes:
+- `<slug>.npz`
+- `<slug>.txt`
+- `<slug>_skeleton.mp4`
+- `<slug>.motion` when `--output-type motion` (default)
+
+**Wrapper options:**
+
+| Flag | Default | Description |
+|:--|:--|:--|
+| `--prompt` | (required) | Text prompt describing the desired motion |
+| `--duration` | `3.0` | Motion duration in seconds |
+| `--output-dir` | `output/generated` | Output directory |
+| `--output-type` | `motion` | Final artifact to keep: `motion` or `npz` |
+| `--enable-body-model-chunking` | off | Reduce peak VRAM usage during wooden-mesh decoding |
 
 ### Batch Inference (CLI)
 
@@ -357,10 +394,10 @@ Generated NPZ files can be converted to ProtoMotions `.motion` format and tracke
 Text prompt
     │
     ▼
-generate_motion.py (this repo, hymotion conda env)
-    │  Outputs: .npz (SMPL-H params) + skeleton .mp4
+scripts/generate_motion.py (this repo, hymotion conda env)
+    │  Outputs: <prompt-slug>/ with .npz, .txt, and skeleton .mp4
     ▼
-hymotion_isaaclab/scripts/convert_npz.py (env_isaaclab)
+scripts/convert_npz.py (this repo, ProtoMotions found at ~/code/ProtoMotions or via --protomotions-root)
     │  Converts NPZ -> ProtoMotions .motion format
     ▼
 hymotion_isaaclab/scripts/run_tracking.py (env_isaaclab)
@@ -371,37 +408,45 @@ Physics simulation of humanoid following the motion
 
 ### Quick Start
 
-**Step 1 — Generate motion** (hymotion conda env):
+The wrapper below is the shortest path for Isaac Lab: it generates the prompt folder, writes the `.npz`, and converts it to `.motion` in one command.
+
+**Step 1 — Generate `.motion`** (hymotion conda env):
 
 ```bash
 conda activate hymotion
 cd ~/code/HY-Motion
 
-HY_MOTION_LLM_4BIT=1 python generate_motion.py \
+HY_MOTION_LLM_4BIT=1 USE_HF_MODELS=1 bash scripts/generate_motion.sh \
     --prompt "A person walks forward" \
     --output-dir output/generated/
 ```
 
-**Step 2 — Convert to .motion** (env_isaaclab):
+This writes:
+- `output/generated/a_person_walks_forward/a_person_walks_forward.npz`
+- `output/generated/a_person_walks_forward/a_person_walks_forward.txt`
+- `output/generated/a_person_walks_forward/a_person_walks_forward_skeleton.mp4`
+- `output/generated/a_person_walks_forward/a_person_walks_forward.motion`
 
-```bash
-source ~/code/env_isaaclab/bin/activate
-cd ~/code/hymotion_isaaclab
-
-PYTHONPATH="$HOME/code/ProtoMotions:$HOME/code/ProtoMotions/data/scripts:$PYTHONPATH" \
-    python scripts/convert_npz.py \
-        --npz-file ~/code/HY-Motion/output/generated/a_person_walks_forward_000.npz \
-        --output-dir output/
-```
-
-**Step 3 — Track in Isaac Lab** (env_isaaclab, requires DISPLAY):
+**Step 2 — Track in Isaac Lab** (env_isaaclab, requires DISPLAY):
 
 ```bash
 export DISPLAY=:1
 PYTHONPATH="$HOME/code/ProtoMotions:$HOME/code/ProtoMotions/data/scripts:$PYTHONPATH" \
-    python scripts/run_tracking.py \
-        --motion-file output/a_person_walks_forward_000.motion \
-        --num-envs 1
+python scripts/run_tracking.py \
+    --motion-file ~/code/HY-Motion/output/generated/a_person_walks_forward/a_person_walks_forward.motion \
+    --num-envs 1
+```
+
+**Manual conversion only** (if you generated `--output-type npz`):
+
+The converter looks for ProtoMotions at `~/code/ProtoMotions` by default. If your checkout lives elsewhere, add `--protomotions-root /path/to/ProtoMotions`.
+
+```bash
+cd ~/code/HY-Motion
+
+python scripts/convert_npz.py \
+    --npz-file ~/code/HY-Motion/output/generated/a_person_walks_forward/a_person_walks_forward.npz \
+    --output-dir output/generated/a_person_walks_forward/
 ```
 
 ### Setup
@@ -415,7 +460,7 @@ See the [hymotion_isaaclab README](../hymotion_isaaclab/README.md) for full setu
 | Variable | Values | Default | Description |
 |:--|:--|:--|:--|
 | `HY_MOTION_LLM_4BIT` | `0`, `1` | `0` | Enable 4-bit NF4 quantization for Qwen3-8B text encoder. Set to `1` for GPUs with < 26 GB VRAM. |
-| `USE_HF_MODELS` | `0`, `1` | `0` | When `1`, loads CLIP and Qwen3-8B from Hugging Face Hub. When `0`, loads from local `ckpts/` directory. |
+| `USE_HF_MODELS` | `0`, `1` | `0` | When `1`, loads CLIP and Qwen3-8B from Hugging Face Hub. When `0`, loads from local `ckpts/` directory. If unset, `scripts/generate_motion.py` falls back to `1` when those local text-encoder checkpoints are missing. |
 | `DISABLE_PROMPT_ENGINEERING` | `True`, unset | unset | Disables the Text2MotionPrompter module in the Gradio app (saves VRAM). |
 | `HY_MOTION_DEVICE` | `cpu`, unset | unset | Force CPU-only inference (very slow, but works without a GPU). |
 
@@ -423,16 +468,19 @@ See the [hymotion_isaaclab README](../hymotion_isaaclab/README.md) for full setu
 
 ## Output Format
 
-Each prompt generates the following files in the output directory:
+For the single-prompt scripts (`scripts/generate_motion.py` and `scripts/generate_motion.sh`), each prompt creates its own folder under the output directory:
 
 | File | Description |
 |:--|:--|
-| `XXXXXXXX_000.fbx` | FBX animation file (3D skeleton animation, importable into Blender/Unity/Unreal). Only generated if `fbxsdkpy` is installed. |
-| `XXXXXXXX_000.npz` | NumPy archive containing raw SMPL-H parameters (body pose, hand pose, root translation). |
-| `XXXXXXXX_000.txt` | The original text prompt associated with this motion. |
-| `XXXXXXXX_meta.json` | Metadata including prompt text, seed, duration, and file paths. |
+| `<slug>/<slug>.npz` | NumPy archive containing raw SMPL-H parameters (body pose, hand pose, root translation). |
+| `<slug>/<slug>.txt` | The original text prompt associated with this motion. |
+| `<slug>/<slug>_skeleton.mp4` | Rendered 3D skeleton animation video. |
+| `<slug>/<slug>.motion` | ProtoMotions motion file, only when the bash wrapper runs with `--output-type motion`. |
 
-Additionally, batch-level summary files are written:
+The single-prompt scripts do not emit the legacy `_000` suffix for single-sample outputs.
+
+For `local_infer.py`, the runtime may additionally write FBX outputs when `fbxsdkpy` is installed, and the batch CLI writes summary files such as:
+
 - `batch_results_YYYYMMDD_HHMMSS.json` -- detailed per-prompt results.
 - `batch_summary_YYYYMMDD_HHMMSS.txt` -- aggregate statistics.
 
@@ -445,7 +493,8 @@ Additionally, batch-level summary files are written:
 - Ensure `HY_MOTION_LLM_4BIT=1` is set.
 - Use `--num_seeds 1` to reduce batch size.
 - Use the Lite model (`HY-Motion-1.0-Lite`) instead of the full model.
-- Keep prompts under 30 words and motion duration under 5 seconds.
+- For `scripts/generate_motion.py` or `bash scripts/generate_motion.sh`, add `--enable-body-model-chunking` before increasing `--duration`.
+- Longer durations increase peak VRAM usage during wooden-mesh decoding. `HY-Motion-1.0-Lite` is configured for 360 frames, so durations above 12.0 seconds at 30 FPS are truncated.
 
 ### `bitsandbytes` errors
 

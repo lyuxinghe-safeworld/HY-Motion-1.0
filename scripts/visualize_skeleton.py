@@ -9,11 +9,11 @@ Produces the same visual style as closd_isaaclab/scripts/verify_diffusion.py:
 Usage:
     # With conda environment:
     conda activate hymotion
-    HY_MOTION_LLM_4BIT=1 USE_HF_MODELS=1 python visualize_skeleton.py \
+    HY_MOTION_LLM_4BIT=1 USE_HF_MODELS=1 python scripts/visualize_skeleton.py \
         --prompt "A person walks forward" --duration 4.0
 
     # With local model weights:
-    HY_MOTION_LLM_4BIT=1 USE_HF_MODELS=0 python visualize_skeleton.py \
+    HY_MOTION_LLM_4BIT=1 USE_HF_MODELS=0 python scripts/visualize_skeleton.py \
         --prompt "A person jumps upward" --duration 3.0 \
         --model-path ckpts/tencent/HY-Motion-1.0-Lite
 """
@@ -22,6 +22,7 @@ import argparse
 import json
 import re
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -30,6 +31,18 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation, FFMpegWriter
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+
+def resolve_repo_input_path(path: str) -> str:
+    path_obj = Path(path)
+    if path_obj.is_absolute() or path_obj.exists():
+        return str(path_obj)
+
+    return str(REPO_ROOT / path_obj)
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +121,7 @@ def generate_motion(prompt: str, duration: float, model_path: str,
     import os.path as osp
     from hymotion.utils.t2m_runtime import T2MRuntime
 
+    model_path = resolve_repo_input_path(model_path)
     cfg = osp.join(model_path, "config.yml")
     ckpt = osp.join(model_path, "latest.ckpt")
     if not os.path.exists(cfg):
@@ -174,7 +188,9 @@ def load_npz_keypoints(npz_path: str) -> tuple:
     poses = torch.from_numpy(f["poses"]).float()   # (T, 156)
     trans = torch.from_numpy(f["trans"]).float()    # (T, 3)
 
-    model = WoodenMesh("scripts/gradio/static/assets/dump_wooden")
+    model = WoodenMesh(
+        str(REPO_ROOT / "scripts" / "gradio" / "static" / "assets" / "dump_wooden")
+    )
     with torch.no_grad():
         out = model.forward({"poses": poses, "trans": trans})
     # WoodenMesh.forward returns keypoints3d WITHOUT root translation,
