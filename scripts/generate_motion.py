@@ -32,6 +32,24 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
+MP4_AXIS_LABELS = ("X", "Forward (Z)", "Up (Y)")
+MP4_CAMERA_ELEV = 25
+MP4_CAMERA_AZIM = 45
+
+
+def remap_hymotion_xyz_for_matplotlib(xyz):
+    """Map HY-Motion y-up coordinates into matplotlib's z-up display space."""
+    if xyz.ndim != 3 or xyz.shape[-1] != 3:
+        raise ValueError(f"Expected keypoints shaped (T, J, 3), got {xyz.shape}")
+
+    return xyz[..., [0, 2, 1]]
+
+
+def apply_mp4_camera_view(ax):
+    """Set a front-facing default view for saved skeleton MP4s."""
+    ax.view_init(elev=MP4_CAMERA_ELEV, azim=MP4_CAMERA_AZIM, roll=0)
+
+
 def resolve_repo_input_path(path: str) -> str:
     path_obj = Path(path)
     if path_obj.is_absolute() or path_obj.exists():
@@ -271,13 +289,14 @@ def render_skeleton_mp4(xyz, mp4_path, title, fps=30):
     BODY_JOINT_INDICES = list(range(22))
 
     body_xyz = xyz[:, BODY_JOINT_INDICES, :]
-    T = body_xyz.shape[0]
+    plot_xyz = remap_hymotion_xyz_for_matplotlib(body_xyz)
+    T = plot_xyz.shape[0]
 
     fig = plt.figure(figsize=(6, 6))
     ax = fig.add_subplot(111, projection="3d")
 
-    mins = body_xyz.min(axis=(0, 1))
-    maxs = body_xyz.max(axis=(0, 1))
+    mins = plot_xyz.min(axis=(0, 1))
+    maxs = plot_xyz.max(axis=(0, 1))
     center = (mins + maxs) / 2
     span = (maxs - mins).max() * 0.6
 
@@ -287,11 +306,12 @@ def render_skeleton_mp4(xyz, mp4_path, title, fps=30):
         ax.set_xlim(center[0] - span, center[0] + span)
         ax.set_ylim(center[1] - span, center[1] + span)
         ax.set_zlim(center[2] - span, center[2] + span)
-        ax.set_xlabel("X")
-        ax.set_ylabel("Y")
-        ax.set_zlabel("Z")
+        ax.set_xlabel(MP4_AXIS_LABELS[0])
+        ax.set_ylabel(MP4_AXIS_LABELS[1])
+        ax.set_zlabel(MP4_AXIS_LABELS[2])
+        apply_mp4_camera_view(ax)
 
-        pts = body_xyz[frame]
+        pts = plot_xyz[frame]
         for chain, color in zip(KINEMATIC_CHAINS, CHAIN_COLORS):
             chain_pts = pts[chain]
             ax.plot3D(
