@@ -87,19 +87,85 @@ def test_convert_hymotion_npz_writes_motion_without_dm_control_or_mujoco(
         mocap_framerate=np.array(30, dtype=np.int32),
     )
 
-    module.convert_hymotion_npz(
-        npz_path=npz_path,
-        output_path=output_path,
-        protomotions_root=protomotions_root,
-    )
+    with pytest.warns(
+        RuntimeWarning,
+        match="No contact candidates found with strict thresholds",
+    ):
+        module.convert_hymotion_npz(
+            npz_path=npz_path,
+            output_path=output_path,
+            protomotions_root=protomotions_root,
+        )
 
     assert output_path.exists()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", FutureWarning)
-        motion = torch.load(output_path, map_location="cpu")
+        motion = torch.load(output_path, map_location="cpu", weights_only=False)
     assert motion["rigid_body_pos"].shape[0] == 3
     assert motion["local_rigid_body_rot"].shape[-1] == 4
     assert motion["dof_pos"].ndim == 2
+
+
+def test_contact_detection_falls_back_to_lenient_thresholds_when_strict_finds_none():
+    module = load_converter_module()
+    positions = torch.zeros((2, 1, 3), dtype=torch.float32)
+    velocity = torch.zeros((2, 1, 3), dtype=torch.float32)
+    calls: list[tuple[float, float]] = []
+
+    def fake_contact_detector(
+        positions: torch.Tensor,
+        velocity: torch.Tensor,
+        vel_thres: float,
+        height_thresh: float,
+    ) -> torch.Tensor:
+        del positions, velocity
+        calls.append((vel_thres, height_thresh))
+        if (vel_thres, height_thresh) == (0.15, 0.1):
+            return torch.zeros((2, 1), dtype=torch.float32)
+        if (vel_thres, height_thresh) == (0.8, 0.15):
+            return torch.tensor([[0.0], [1.0]], dtype=torch.float32)
+        raise AssertionError(f"Unexpected thresholds: {(vel_thres, height_thresh)}")
+
+    with pytest.warns(RuntimeWarning, match="No contact candidates found"):
+        contacts = module._compute_contact_labels_with_fallback(
+            positions=positions,
+            velocity=velocity,
+            compute_contact_labels=fake_contact_detector,
+        )
+
+    assert calls == [(0.15, 0.1), (0.8, 0.15)]
+    assert contacts.dtype == torch.bool
+    assert torch.equal(contacts, torch.tensor([[False], [True]]))
+
+
+def test_contact_detection_keeps_strict_candidates_without_warning():
+    module = load_converter_module()
+    positions = torch.zeros((1, 1, 3), dtype=torch.float32)
+    velocity = torch.zeros((1, 1, 3), dtype=torch.float32)
+    calls: list[tuple[float, float]] = []
+
+    def fake_contact_detector(
+        positions: torch.Tensor,
+        velocity: torch.Tensor,
+        vel_thres: float,
+        height_thresh: float,
+    ) -> torch.Tensor:
+        del positions, velocity
+        calls.append((vel_thres, height_thresh))
+        return torch.tensor([[1.0]], dtype=torch.float32)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        contacts = module._compute_contact_labels_with_fallback(
+            positions=positions,
+            velocity=velocity,
+            compute_contact_labels=fake_contact_detector,
+        )
+
+    assert caught == []
+    assert calls == [(0.15, 0.1)]
+    assert contacts.dtype == torch.bool
+    assert torch.equal(contacts, torch.tensor([[True]]))
 
 
 def test_converter_main_returns_nonzero_when_any_job_fails(

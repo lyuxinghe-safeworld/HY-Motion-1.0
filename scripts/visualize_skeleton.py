@@ -27,32 +27,12 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation, FFMpegWriter
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-
-MP4_AXIS_LABELS = ("X", "Forward (Z)", "Up (Y)")
-MP4_CAMERA_ELEV = 25
-MP4_CAMERA_AZIM = 45
-
-
-def remap_hymotion_xyz_for_matplotlib(xyz: np.ndarray) -> np.ndarray:
-    """Map HY-Motion y-up coordinates into matplotlib's z-up display space."""
-    if xyz.ndim != 3 or xyz.shape[-1] != 3:
-        raise ValueError(f"Expected keypoints shaped (T, J, 3), got {xyz.shape}")
-
-    return xyz[..., [0, 2, 1]]
-
-
-def apply_mp4_camera_view(ax) -> None:
-    """Set a front-facing default view for saved skeleton MP4s."""
-    ax.view_init(elev=MP4_CAMERA_ELEV, azim=MP4_CAMERA_AZIM, roll=0)
+from hymotion.utils.skeleton_visualization import render_skeleton_mp4
 
 
 def resolve_repo_input_path(path: str) -> str:
@@ -227,67 +207,6 @@ def load_npz_keypoints(npz_path: str) -> tuple:
             prompt = fh.read().strip()
 
     return kp, prompt
-
-
-def render_skeleton_mp4(xyz: np.ndarray, mp4_path: str, title: str,
-                        fps: int = 30) -> None:
-    """Render a 3D skeleton animation to MP4.
-
-    Matches the visual style of closd_isaaclab verify_diffusion.py:
-      - 600x600 figure, 3D projection
-      - Colored kinematic chains with linewidth=2
-      - Black scatter joints with s=10
-      - Title with prompt + frame counter
-      - Fixed axis limits from data extent
-
-    Args:
-        xyz: (T, J, 3) joint positions.
-        mp4_path: Output file path.
-        title: Prompt text shown as title.
-        fps: Frame rate.
-    """
-    # Use only body joints for visualization (skip fingers)
-    body_xyz = xyz[:, BODY_JOINT_INDICES, :]
-    plot_xyz = remap_hymotion_xyz_for_matplotlib(body_xyz)
-    T = plot_xyz.shape[0]
-
-    fig = plt.figure(figsize=(6, 6))
-    ax = fig.add_subplot(111, projection="3d")
-
-    # Compute fixed axis limits from full trajectory
-    mins = plot_xyz.min(axis=(0, 1))
-    maxs = plot_xyz.max(axis=(0, 1))
-    center = (mins + maxs) / 2
-    span = (maxs - mins).max() * 0.6
-
-    def update(frame):
-        ax.clear()
-        ax.set_title(f"{title}\nFrame {frame}/{T}", fontsize=10)
-        ax.set_xlim(center[0] - span, center[0] + span)
-        ax.set_ylim(center[1] - span, center[1] + span)
-        ax.set_zlim(center[2] - span, center[2] + span)
-        ax.set_xlabel(MP4_AXIS_LABELS[0])
-        ax.set_ylabel(MP4_AXIS_LABELS[1])
-        ax.set_zlabel(MP4_AXIS_LABELS[2])
-        apply_mp4_camera_view(ax)
-
-        pts = plot_xyz[frame]
-        for chain, color in zip(KINEMATIC_CHAINS, CHAIN_COLORS):
-            chain_pts = pts[chain]
-            ax.plot3D(
-                chain_pts[:, 0], chain_pts[:, 1], chain_pts[:, 2],
-                color=color, linewidth=2,
-            )
-        ax.scatter3D(
-            pts[:, 0], pts[:, 1], pts[:, 2],
-            s=10, c="black", zorder=5,
-        )
-
-    ani = FuncAnimation(fig, update, frames=T, interval=1000 / fps)
-    writer = FFMpegWriter(fps=fps, bitrate=2000)
-    ani.save(str(mp4_path), writer=writer)
-    plt.close(fig)
-    print(f"Saved: {mp4_path}")
 
 
 def main() -> None:

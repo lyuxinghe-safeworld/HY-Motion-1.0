@@ -18,8 +18,11 @@ from __future__ import annotations
 import argparse
 import sys
 import types
+import warnings
 import xml.etree.ElementTree as ET
 from pathlib import Path
+
+import torch
 
 DEFAULT_PROTOMOTIONS_ROOT = Path.home() / "code" / "ProtoMotions"
 _FOOT_HEIGHT_OFFSET = 0.015  # metres, same as convert_amass_to_proto.py for SMPL
@@ -27,6 +30,10 @@ _N_BODY_JOINTS = 22
 _N_HAND_JOINTS = 2  # synthetic zero-rotation hands
 _N_TOTAL_JOINTS = _N_BODY_JOINTS + _N_HAND_JOINTS  # 24
 _N_NON_ROOT_JOINTS = 23
+_STRICT_CONTACT_VEL_THRESHOLD = 0.15
+_STRICT_CONTACT_HEIGHT_THRESHOLD = 0.1
+_LENIENT_CONTACT_VEL_THRESHOLD = 0.8
+_LENIENT_CONTACT_HEIGHT_THRESHOLD = 0.15
 
 
 class _MjcfJoint:
@@ -149,6 +156,35 @@ def _parse_float_list(raw_value: str | None) -> list[float] | None:
     if raw_value is None:
         return None
     return [float(item) for item in raw_value.split()]
+
+
+def _compute_contact_labels_with_fallback(
+    positions: torch.Tensor,
+    velocity: torch.Tensor,
+    compute_contact_labels,
+) -> torch.Tensor:
+    strict_contacts = compute_contact_labels(
+        positions=positions,
+        velocity=velocity,
+        vel_thres=_STRICT_CONTACT_VEL_THRESHOLD,
+        height_thresh=_STRICT_CONTACT_HEIGHT_THRESHOLD,
+    )
+    if strict_contacts.any():
+        return strict_contacts.to(torch.bool)
+
+    warnings.warn(
+        "No contact candidates found with strict thresholds; "
+        "retrying with lenient thresholds (height<0.15, vel<0.8).",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    lenient_contacts = compute_contact_labels(
+        positions=positions,
+        velocity=velocity,
+        vel_thres=_LENIENT_CONTACT_VEL_THRESHOLD,
+        height_thresh=_LENIENT_CONTACT_HEIGHT_THRESHOLD,
+    )
+    return lenient_contacts.to(torch.bool)
 
 
 def _parse_mjcf_joint(joint_element: ET.Element) -> _MjcfJoint:
@@ -355,12 +391,11 @@ def convert_hymotion_npz(
 
     from contact_detection import compute_contact_labels_from_pos_and_vel
 
-    motion.rigid_body_contacts = compute_contact_labels_from_pos_and_vel(
+    motion.rigid_body_contacts = _compute_contact_labels_with_fallback(
         positions=motion.rigid_body_pos,
         velocity=motion.rigid_body_vel,
-        vel_thres=0.15,
-        height_thresh=0.1,
-    ).to(torch.bool)
+        compute_contact_labels=compute_contact_labels_from_pos_and_vel,
+    )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(motion.to_dict(), str(output_path))
